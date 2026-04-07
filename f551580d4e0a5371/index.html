@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="googlebot" content="noindex, nofollow">
+<title>Dashboard</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+* { box-sizing: border-box; }
+body { font-family: -apple-system, sans-serif; margin: 0; padding: 20px; background: #f5f5f5; }
+h1 { text-align: center; font-size: 22px; }
+.box { background: #fff; border-radius: 10px; padding: 24px; margin: 20px auto; box-shadow: 0 1px 4px rgba(0,0,0,.1); position: relative; max-width: 1100px; }
+.runway-badge { position: absolute; top: 20px; right: 24px; text-align: right; }
+.runway-badge .label { font-size: 11px; color: #888; }
+.runway-badge .value { font-size: 32px; font-weight: bold; line-height: 1.1; }
+.runway-badge .unit { font-size: 14px; color: #888; }
+.updated { text-align: center; font-size: 11px; color: #aaa; margin-top: 8px; }
+#lockscreen { position: fixed; inset: 0; background: #f5f5f5; display: flex; align-items: center; justify-content: center; z-index: 999; }
+#lockscreen form { background: #fff; padding: 32px; border-radius: 12px; box-shadow: 0 2px 12px rgba(0,0,0,.1); text-align: center; }
+#lockscreen input { display: block; margin: 12px auto; padding: 10px 16px; font-size: 16px; border: 1px solid #ddd; border-radius: 6px; width: 220px; }
+#lockscreen button { padding: 10px 32px; font-size: 14px; background: #2563eb; color: #fff; border: none; border-radius: 6px; cursor: pointer; }
+#lockscreen .err { color: #ef4444; font-size: 13px; margin-top: 8px; display: none; }
+#main { display: none; }
+</style>
+</head>
+<body>
+<div id="lockscreen">
+  <form onsubmit="return unlock()">
+    <h2>issues CF Dashboard</h2>
+    <input type="password" id="pw" placeholder="パスワードを入力" autofocus>
+    <button type="submit">Enter</button>
+    <div class="err" id="err">パスワードが違います</div>
+  </form>
+</div>
+<div id="main">
+  <h1>issues CF推移</h1>
+  <div class="box">
+    <div class="runway-badge">
+      <div class="label">ランウェイ</div>
+      <div class="value" id="runwayValue">—</div>
+      <div class="unit">ヶ月</div>
+    </div>
+    <canvas id="chart"></canvas>
+  </div>
+  <div class="updated" id="updated"></div>
+</div>
+<script>
+// Simple password gate (hash-based)
+// SHA-256 of the password - change HASH to update password
+const HASH = 'f953571cac42c80afe435c738f9dc05dd0d42648552f45bef33f2bd4c04378c9';
+
+async function sha256(str) {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str));
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function unlock() {
+  const pw = document.getElementById('pw').value;
+  const h = await sha256(pw);
+  if (h === HASH) {
+    sessionStorage.setItem('cf_auth', '1');
+    document.getElementById('lockscreen').style.display = 'none';
+    document.getElementById('main').style.display = 'block';
+    loadData();
+  } else {
+    document.getElementById('err').style.display = 'block';
+  }
+  return false;
+}
+
+if (sessionStorage.getItem('cf_auth') === '1') {
+  document.getElementById('lockscreen').style.display = 'none';
+  document.getElementById('main').style.display = 'block';
+  loadData();
+}
+
+async function loadData() {
+  const resp = await fetch('data.json?' + Date.now());
+  const raw = await resp.json();
+
+  // Parse data from sheet rows
+  const dateRow = raw[3];
+  const cashRow = raw[4];
+  const giinRow = raw[8];
+  const paRow = raw[11];
+  const nbRow = raw[12];
+  const gbRow = raw[13];
+
+  // Find column offset (first date column)
+  let startCol = dateRow.findIndex(v => v && /\d{4}\/\d{2}/.test(v));
+  if (startCol < 0) return;
+
+  const labels = [], cash = [], giin = [], pa = [], nb = [], gb = [];
+
+  for (let i = startCol; i < dateRow.length; i++) {
+    if (!dateRow[i]) break;
+    const d = dateRow[i];
+    labels.push(d.replace(/^20/, ''));
+    cash.push(num(cashRow[i]));
+    giin.push(num(giinRow[i]));
+    pa.push(num(paRow[i]));
+    nb.push(num(nbRow[i]));
+    gb.push(num(gbRow[i]));
+  }
+
+  // Trim trailing zeros/nulls from cash
+  let end = cash.length;
+  while (end > 0 && (cash[end - 1] === 0 || cash[end - 1] === null)) end--;
+  const L = labels.slice(0, end);
+  const cD = cash.slice(0, end), gD = giin.slice(0, end), pD = pa.slice(0, end);
+  const nD = nb.slice(0, end), gB = gb.slice(0, end);
+
+  // Runway
+  const last = cD.length - 1;
+  const validB = [nD[last-2], nD[last-1], nD[last]].filter(v => v !== null && v > 0);
+  const avgB = validB.length ? validB.reduce((a, b) => a + b, 0) / validB.length : 0;
+  const runway = avgB > 0 ? Math.round(cD[last] / avgB * 10) / 10 : '—';
+  const el = document.getElementById('runwayValue');
+  el.textContent = runway;
+  el.style.color = runway < 6 ? '#ef4444' : runway < 12 ? '#f59e0b' : '#10b981';
+
+  // Updated timestamp
+  const lastModified = resp.headers.get('last-modified');
+  if (lastModified) document.getElementById('updated').textContent = 'Data updated: ' + new Date(lastModified).toLocaleString('ja-JP');
+
+  renderChart(L, cD, gD, pD, gB);
+}
+
+function num(v) {
+  if (!v || v === 'ー' || v === '' || v === '#DIV/0!') return null;
+  if (typeof v === 'number') return v;
+  return Number(String(v).replace(/,/g, ''));
+}
+
+function renderChart(L, cash, giin, pa, gb) {
+  const fmt = v => {
+    if (v == null) return '';
+    const a = Math.abs(v);
+    if (a >= 1e8) return (v / 1e8).toFixed(1) + '億円';
+    if (a >= 1e4) return Math.round(v / 1e4).toLocaleString() + '万円';
+    return v.toLocaleString() + '円';
+  };
+  const yTick = { callback: v => {
+    const a = Math.abs(v);
+    if (a >= 1e8) return (v / 1e8).toFixed(1) + '億';
+    if (a >= 1e7) return (v / 1e7).toFixed(0) + '千万';
+    if (a >= 1e4) return Math.round(v / 1e4).toLocaleString() + '万';
+    return v;
+  }};
+
+  new Chart('chart', {
+    type: 'bar',
+    data: {
+      labels: L,
+      datasets: [
+        { label: '残キャッシュ', data: cash, type: 'line', borderColor: '#2563eb', backgroundColor: 'rgba(37,99,235,.05)', fill: true, tension: .3, pointRadius: 2, borderWidth: 2.5, yAxisID: 'y', order: 0 },
+        { label: 'Grossバーンレート', data: gb, type: 'line', borderColor: '#ef4444', borderDash: [5, 3], tension: .3, pointRadius: 2, borderWidth: 1.5, yAxisID: 'y1', order: 1 },
+        { label: '議員課金', data: giin, backgroundColor: 'rgba(16,185,129,.65)', borderRadius: 2, yAxisID: 'y1', stack: 'rev', order: 2 },
+        { label: 'PA支援', data: pa, backgroundColor: 'rgba(245,158,11,.65)', borderRadius: 2, yAxisID: 'y1', stack: 'rev', order: 2 }
+      ]
+    },
+    options: {
+      aspectRatio: 2.5,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        tooltip: { callbacks: { label: c => c.dataset.label + ': ' + fmt(c.parsed.y) } },
+        legend: { labels: { usePointStyle: true, padding: 16 } }
+      },
+      scales: {
+        x: { ticks: { maxRotation: 45, font: { size: 10 } } },
+        y: { position: 'left', title: { display: true, text: '残キャッシュ', font: { size: 11 } }, ticks: yTick, suggestedMin: 0 },
+        y1: { position: 'right', title: { display: true, text: '入金 / バーンレート', font: { size: 11 } }, ticks: yTick, stacked: true, grid: { drawOnChartArea: false } }
+      }
+    }
+  });
+}
+</script>
+</body>
+</html>

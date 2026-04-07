@@ -1,0 +1,36 @@
+name: Update CF Data
+
+on:
+  schedule:
+    - cron: '0 1 * * *'  # 毎日10:00 JST
+  workflow_dispatch:       # 手動実行
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install google-api-python-client google-auth google-auth-httplib2
+
+      - name: Fetch data from Google Sheets
+        env:
+          GOOGLE_TOKEN_JSON: ${{ secrets.GOOGLE_TOKEN_JSON }}
+        run: python fetch_data.py
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add f551580d4e0a5371/data.json
+          git diff --cached --quiet || git commit -m "Update CF data $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push
