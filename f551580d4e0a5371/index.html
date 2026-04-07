@@ -113,8 +113,8 @@ async function loadData() {
 
   // Runway
   const last = cD.length - 1;
-  const validB = [nD[last-2], nD[last-1], nD[last]].filter(v => v !== null && v > 0);
-  const avgB = validB.length ? validB.reduce((a, b) => a + b, 0) / validB.length : 0;
+  const recentBurns = [nD[last-2], nD[last-1], nD[last]].filter(v => v !== null);
+  const avgB = recentBurns.length ? recentBurns.reduce((a, b) => a + b, 0) / recentBurns.length : 0;
   const runway = avgB > 0 ? Math.round(cD[last] / avgB * 10) / 10 : '—';
   const el = document.getElementById('runwayValue');
   el.textContent = runway;
